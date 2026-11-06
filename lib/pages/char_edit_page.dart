@@ -1146,20 +1146,23 @@ class _RoleEditPageState extends State<RoleEditPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.menu_book_outlined),
-                      title: const Text('选择世界书'),
-                      subtitle: Text(_selectedWorldBookLabel),
-                      trailing: _selectedWorldBookId != null
-                          ? IconButton(
-                              icon: const Icon(Icons.edit_outlined),
-                              tooltip: '编辑世界书',
-                              onPressed: () =>
-                                  _editWorldBook(_selectedWorldBookId!),
-                            )
-                          : const Icon(Icons.chevron_right),
-                      onTap: _pickWorldBook,
+                    Material(
+                      color: Colors.transparent,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.menu_book_outlined),
+                        title: const Text('选择世界书'),
+                        subtitle: Text(_selectedWorldBookLabel),
+                        trailing: _selectedWorldBookId != null
+                            ? IconButton(
+                                icon: const Icon(Icons.edit_outlined),
+                                tooltip: '编辑世界书',
+                                onPressed: () =>
+                                    _editWorldBook(_selectedWorldBookId!),
+                              )
+                            : const Icon(Icons.chevron_right),
+                        onTap: _pickWorldBook,
+                      ),
                     ),
                   ],
                 ),

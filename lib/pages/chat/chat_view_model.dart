@@ -17,6 +17,7 @@ import '../../services/api_config_service.dart';
 import '../../services/app_settings_service.dart';
 import '../../services/chat_character_resolver.dart';
 import '../../services/chat_database_service.dart';
+import '../../services/chat_memory_service.dart';
 import '../../services/chat_opening_message_builder.dart';
 import '../../services/chat_service.dart';
 import '../../services/chat_variable_service.dart';
@@ -84,6 +85,9 @@ class ChatViewModel extends ChangeNotifier {
   /// 角色卡声明的变量名，用于区分「作者隐藏」与「聊天中新出现」。
   List<String> _cardVariableNames = const [];
   List<ChatMessage> _messages = [];
+
+  /// 已被分层摘要覆盖、不再进入 Prompt 的消息 ID（UI 仍展示，但做幽灵标记）。
+  Set<String> _ghostedMessageIds = const {};
   List<WorldBook> _worldBooks = [];
   List<PresetSummary> _presets = [];
   List<RegexRuleGroupSummary> _regexRuleGroups = [];
@@ -202,6 +206,9 @@ class ChatViewModel extends ChangeNotifier {
   String? get regeneratingUserMessageId => _regeneratingUserMessageId;
   String get streamingAssistantText => _streamingAssistantText;
   String get streamingThinkingChain => _streamingThinkingChain;
+
+  /// 当前分支上已被摘要覆盖（幽灵化）的消息 ID。
+  Set<String> get ghostedMessageIds => _ghostedMessageIds;
 
   /// 流式正文/思考链的只读订阅入口（按帧合并，内容不变时不通知）。
   ValueListenable<StreamingMessageSnapshot> get streamingMessageListenable =>
@@ -416,6 +423,7 @@ class ChatViewModel extends ChangeNotifier {
       _variablePanelConfig = null;
       _cardVariableNames = const [];
       _messages = [];
+      _ghostedMessageIds = const {};
       _isDraftSession = false;
       _draftOpeningAssistantMessages = const [];
       _isLoading = false;
@@ -454,6 +462,7 @@ class ChatViewModel extends ChangeNotifier {
     _cardVariableNames = _declaredVariableNamesOf(resolvedCharacter.cardJson);
     _draftOpeningMessageIndex = 0;
     _messages = _buildDraftOpeningMessages(openingMessages);
+    _ghostedMessageIds = const {};
     _selectedUserSettingId = draftSelectedUserSettingId;
     _selectedPresetId = draftSelectedPresetId;
     _selectedWorldBookIds
@@ -540,6 +549,7 @@ class ChatViewModel extends ChangeNotifier {
       _variablePanelConfig = null;
       _cardVariableNames = const [];
       _messages = [];
+      _ghostedMessageIds = const {};
       _selectedUserSettingId = null;
       _selectedPresetId = null;
       _selectedWorldBookIds.clear();
@@ -572,6 +582,17 @@ class ChatViewModel extends ChangeNotifier {
         ? const []
         : _declaredVariableNamesOf(resolvedCharacter.cardJson);
     _messages = bundle.activeMessages;
+    final pathMessageIds = bundle.activeMessages
+        .where((message) => message.id != null)
+        .map((message) => message.id!)
+        .toList(growable: false);
+    _ghostedMessageIds = await ChatMemoryService.instance.ghostedMessageIds(
+      sessionId: bundle.session.id,
+      pathMessageIds: pathMessageIds,
+    );
+    if (_isDisposed || loadGeneration != _sessionLoadGeneration) {
+      return;
+    }
     _selectedUserSettingId = bundle.session.selectedUserSettingId;
     _selectedPresetId = bundle.session.selectedPresetId;
     _selectedWorldBookIds
@@ -1410,6 +1431,7 @@ class ChatViewModel extends ChangeNotifier {
     nextOpeningMessages[editingIndex] = normalizedText;
     _draftOpeningAssistantMessages = nextOpeningMessages;
     _messages = _buildDraftOpeningMessages(nextOpeningMessages);
+    _ghostedMessageIds = const {};
     _activeSession = session.copyWith(lastMessagePreview: normalizedText);
     notifyListeners();
   }
@@ -1452,6 +1474,7 @@ class ChatViewModel extends ChangeNotifier {
       }
       _draftOpeningMessageIndex = nextIndex;
       _messages = _buildDraftOpeningMessages(_draftOpeningAssistantMessages);
+      _ghostedMessageIds = const {};
       _activeSession = _activeSession?.copyWith(
         lastMessagePreview:
             _draftOpeningAssistantMessages[_draftOpeningMessageIndex],
@@ -1580,6 +1603,7 @@ class ChatViewModel extends ChangeNotifier {
       _draftOpeningMessageIndex = 0;
       _draftOpeningAssistantMessages = openingMessages;
       _messages = _buildDraftOpeningMessages(openingMessages);
+    _ghostedMessageIds = const {};
       _selectedUserSettingId = selectedUserSettingId;
       _activeSession = session.copyWith(
         title: nextTitle,

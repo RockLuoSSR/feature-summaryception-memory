@@ -649,7 +649,7 @@ class PromptAssembler {
       case 'worldInfoAfter':
         return '世界书: after';
       case 'longTermMemory':
-        return '长期记忆';
+        return '分层记忆';
       case 'main':
         return '预设: main';
       case 'jailbreak':

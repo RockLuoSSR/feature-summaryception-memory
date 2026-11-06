@@ -185,6 +185,7 @@ class _ChatMessageListState extends State<ChatMessageList>
       isBusyRegenerating: availability.isRegeneratingUserMessage,
       isBusyImpersonating: widget.params.isImpersonating,
       displayText: displayText == message.text ? null : displayText,
+      isGhosted: widget.params.ghostedMessageIds.contains(message.id),
       onCopy: () => widget.params.onCopyMessage(message),
       onEdit: availability.hasDraftOpeningActions
           ? widget.params.onEditDraftOpeningMessage

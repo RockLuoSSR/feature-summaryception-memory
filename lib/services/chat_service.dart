@@ -104,7 +104,10 @@ class ChatService {
       chatMessages: chatMessages,
     );
 
-    final truncatedChatMessages = _truncateChatMessages(chatMessages);
+    final truncatedChatMessages = await _promptChatMessages(
+      sessionId: session.id,
+      messages: chatMessages,
+    );
 
     // 分支正确的状态变量：求值到本次发送父消息（gal 回复历史时为
     // 分支点消息）的时刻，供 {{getvar}} 读取。
@@ -166,21 +169,8 @@ class ChatService {
         sessionId: activeSession.id,
         branchLeafId: assistantNode.id,
         anchorText: assistantNode.text,
-        chatMessages: chatMessages,
-        userMessage: ChatMessage(
-          id: userNode.id,
-          text: userNode.text,
-          isMe: true,
-        ),
-        assistantMessage: ChatMessage(
-          id: assistantNode.id,
-          text: assistantNode.text,
-          isMe: false,
-        ),
         characterName: character.name,
         userName: userSetting.name,
-        currentInput: userNode.text,
-        cardData: _extractCardData(character.cardJson),
       );
 
       // 状态提取（二次调用）：失败静默跳过，不影响聊天主流程。
@@ -261,7 +251,10 @@ class ChatService {
       chatMessages: historyBeforeUserMessage,
     );
 
-    final truncatedHistory = _truncateChatMessages(historyBeforeUserMessage);
+    final truncatedHistory = await _promptChatMessages(
+      sessionId: session.id,
+      messages: historyBeforeUserMessage,
+    );
 
     // 重新生成的新版本从用户消息时刻的状态出发，与旧版本的差量互不干扰。
     final chatVariables = await _resolveChatVariables(
@@ -311,21 +304,8 @@ class ChatService {
         sessionId: session.id,
         branchLeafId: assistantNode.id,
         anchorText: assistantNode.text,
-        chatMessages: historyBeforeUserMessage,
-        userMessage: ChatMessage(
-          id: userMessage.id,
-          text: userMessage.text,
-          isMe: true,
-        ),
-        assistantMessage: ChatMessage(
-          id: assistantNode.id,
-          text: assistantNode.text,
-          isMe: false,
-        ),
         characterName: character.name,
         userName: userSetting.name,
-        currentInput: userMessage.text,
-        cardData: _extractCardData(character.cardJson),
       );
 
       // 状态提取（二次调用）：失败静默跳过，不影响聊天主流程。
@@ -420,7 +400,10 @@ class ChatService {
       chatMessages: chatMessages,
     );
 
-    final truncatedChatMessages = _truncateChatMessages(chatMessages);
+    final truncatedChatMessages = await _promptChatMessages(
+      sessionId: session.id,
+      messages: chatMessages,
+    );
 
     // 继续推进从最后一条角色消息时刻的状态出发。
     final chatVariables = await _resolveChatVariables(
@@ -495,6 +478,13 @@ class ChatService {
           cardJson: character.cardJson,
         ),
       );
+      _scheduleMemoryExtraction(
+        sessionId: session.id,
+        branchLeafId: assistantNode.id,
+        anchorText: assistantNode.text,
+        characterName: character.name,
+        userName: userSetting.name,
+      );
 
       return completion;
     } on ChatCompletionCancelledException {
@@ -549,7 +539,10 @@ class ChatService {
       chatMessages: chatMessages,
     );
 
-    final truncatedChatMessages = _truncateChatMessages(chatMessages);
+    final truncatedChatMessages = await _promptChatMessages(
+      sessionId: session.id,
+      messages: chatMessages,
+    );
 
     // 选项需要基于「最新消息时刻」的状态变量（如当前 HP / 好感度），
     // 否则预设与提示词里的 {{getvar}} / {{getstate}} 会被渲染为空。
@@ -657,7 +650,10 @@ class ChatService {
       chatMessages: chatMessages,
     );
 
-    final truncatedChatMessages = _truncateChatMessages(chatMessages);
+    final truncatedChatMessages = await _promptChatMessages(
+      sessionId: session.id,
+      messages: chatMessages,
+    );
 
     // 帮答同样需要读取当前状态变量，否则 {{getvar}} / {{getstate}} 为空。
     final chatVariables = await _resolveChatVariables(
@@ -908,11 +904,50 @@ class ChatService {
     );
   }
 
-  List<ChatMessage> _truncateChatMessages(List<ChatMessage> messages) {
-    return ChatMemoryService.truncateToRecentRounds(
-      messages,
-      memoryExtractionNotifier.value.recentRounds,
-    );
+  /// 构造送入主 Prompt 的历史消息：开启分层记忆后，已摘要的消息（幽灵消息）
+  /// 不再进入上下文，只保留尚未摘要的最近逐字对话。
+  Future<List<ChatMessage>> _promptChatMessages({
+    required String sessionId,
+    required List<ChatMessage> messages,
+  }) async {
+    final config = memoryExtractionNotifier.value;
+    var result = messages;
+    if (config.enabled) {
+      final pathIds = messages
+          .where((message) => message.id != null)
+          .map((message) => message.id!)
+          .toList(growable: false);
+      if (pathIds.isNotEmpty) {
+        final ghosted = await ChatMemoryService.instance.ghostedMessageIds(
+          sessionId: sessionId,
+          pathMessageIds: pathIds,
+        );
+        if (ghosted.isNotEmpty) {
+          result = messages
+              .where(
+                (message) =>
+                    message.id == null || !ghosted.contains(message.id),
+              )
+              .toList(growable: false);
+        }
+      }
+    }
+    return _takeRecentTurns(result, config.verbatimTurns);
+  }
+
+  /// 只保留最近 [rounds] 条助手回复及其之间的用户消息，作为逐字窗口。
+  static List<ChatMessage> _takeRecentTurns(
+    List<ChatMessage> messages,
+    int rounds,
+  ) {
+    if (rounds < 0) return messages;
+    var seen = 0;
+    for (var index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].isMe) continue;
+      seen++;
+      if (seen > rounds) return messages.sublist(index + 1);
+    }
+    return messages;
   }
 
   /// 求值分支正确的状态变量（求值到 [messageId] 时刻），供 {{getvar}} 读取。
@@ -954,26 +989,20 @@ class ChatService {
         .toList();
     if (pathIds.isEmpty) return const [];
 
-    final memories = await ChatMemoryService.instance.getRecentBranchMemories(
+    final memories = await ChatMemoryService.instance.buildSummaryContext(
       sessionId: sessionId,
       pathMessageIds: pathIds,
-      count: memoryConfig.recallCount,
     );
-    return memories.map((m) => m.content).toList();
+    return memories;
   }
 
-  /// 经后台调度器排队执行记忆提取；消息文本与捕获时不一致则丢弃。
+  /// 经后台调度器排队执行分层摘要；当前叶子文本变化时丢弃过期任务。
   void _scheduleMemoryExtraction({
     required String sessionId,
     required String branchLeafId,
     required String anchorText,
-    required List<ChatMessage> chatMessages,
-    required ChatMessage userMessage,
-    required ChatMessage assistantMessage,
     required String characterName,
     required String userName,
-    required String currentInput,
-    required Map<String, String> cardData,
   }) {
     PostTaskScheduler.instance.schedule(
       kind: PostTaskKind.memoryExtraction,
@@ -986,74 +1015,15 @@ class ChatService {
           anchorText,
       run: (ensureFresh) async {
         await ensureFresh();
-        await _tryAutoExtractMemories(
+        await ChatMemoryService.instance.summarizeIfNeeded(
           sessionId: sessionId,
           branchLeafId: branchLeafId,
-          chatMessages: chatMessages,
-          userMessage: userMessage,
-          assistantMessage: assistantMessage,
           characterName: characterName,
           userName: userName,
-          currentInput: currentInput,
-          cardData: cardData,
+          maxBatches: 3,
           beforeCommit: ensureFresh,
         );
       },
-    );
-  }
-
-  Future<void> _tryAutoExtractMemories({
-    required String sessionId,
-    required String branchLeafId,
-    required List<ChatMessage> chatMessages,
-    required ChatMessage userMessage,
-    required ChatMessage assistantMessage,
-    required String characterName,
-    required String userName,
-    required String currentInput,
-    required Map<String, String> cardData,
-    Future<void> Function()? beforeCommit,
-  }) async {
-    final memoryConfig = memoryExtractionNotifier.value;
-    if (!memoryConfig.enabled) return;
-    if (memoryConfig.interval <= 0) return;
-
-    final allMessages = [...chatMessages, userMessage, assistantMessage];
-    final pathIds = chatMessages
-        .where((m) => m.id != null)
-        .map((m) => m.id!)
-        .toList();
-    final newAssistantCount = await _countNewAssistantSinceLastExtraction(
-      sessionId: sessionId,
-      allMessages: allMessages,
-      pathIds: pathIds,
-    );
-    if (newAssistantCount < memoryConfig.interval) return;
-
-    await ChatMemoryService.instance.tryExtractAndSave(
-      sessionId: sessionId,
-      branchLeafId: branchLeafId,
-      messages: allMessages,
-      characterName: characterName,
-      userName: userName,
-      currentInput: currentInput,
-      cardData: cardData,
-      beforeCommit: beforeCommit,
-    );
-  }
-
-  Future<int> _countNewAssistantSinceLastExtraction({
-    required String sessionId,
-    required List<ChatMessage> allMessages,
-    required List<String> pathIds,
-  }) async {
-    final memories = await ChatMemoryService.instance.getBranchMemories(
-      sessionId: sessionId,
-      pathMessageIds: pathIds,
-    );
-    return ChatMemoryService.countNewAssistantMessages(
-      allMessages: allMessages,
-      branchMemories: memories,
     );
   }
 
@@ -1068,15 +1038,6 @@ class ChatService {
       if (preset.extra['enable_reasoning'] == true) ...{
         'reasoning_effort': preset.extra['reasoning_effort'] ?? 'medium',
       },
-    };
-  }
-
-  static Map<String, String> _extractCardData(Map<String, dynamic> cardJson) {
-    final data = (cardJson['data'] as Map<String, dynamic>?) ?? cardJson;
-    return {
-      'personality': (data['personality'] as String?) ?? '',
-      'description': (data['description'] as String?) ?? '',
-      'scenario': (data['scenario'] as String?) ?? '',
     };
   }
 }

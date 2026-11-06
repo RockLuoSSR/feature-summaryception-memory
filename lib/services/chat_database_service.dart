@@ -18,14 +18,14 @@ class ChatDatabaseService {
   /// 会话 / 消息等聊天主体数据的变更信号；监听方通常会重载整条会话。
   final ValueNotifier<int> changeNotifier = ValueNotifier<int>(0);
 
-  /// 记忆数据（`chat_memories`）的变更信号。
+  /// 记忆数据（`chat_memory_snippets`）的变更信号。
   ///
   /// 记忆不参与聊天消息渲染，[changeNotifier] 有意不广播记忆写入：
   /// 否则后台记忆提取落库会让聊天页整页重载一次。需要「记忆已更新」
   /// 精确信号的界面（如聊天侧边栏的记忆计数）监听这里。
   final ValueNotifier<int> memoryChangeNotifier = ValueNotifier<int>(0);
 
-  static const int _dbVersion = 6;
+  static const int _dbVersion = 7;
   static const String _dbName = 'pocket_inn_chat.db';
 
   Database? _database;
@@ -169,6 +169,32 @@ class ChatDatabaseService {
       // 挂在产生它的助手消息上，随消息删除级联清理，随分支各归各路。
       await _createVariableSchema(db);
     }
+    if (oldVersion < 7 && newVersion >= 7) {
+      // v7: 引入 Summaryception 风格的分层摘要片段表。
+      await _createSummarySchema(db);
+    }
+  }
+
+  Future<void> _createSummarySchema(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS chat_memory_snippets (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        layer INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        source_message_ids TEXT NOT NULL DEFAULT '[]',
+        parent_snippet_ids TEXT NOT NULL DEFAULT '[]',
+        is_seed INTEGER NOT NULL DEFAULT 0,
+        created_on_leaf_id TEXT NOT NULL DEFAULT '',
+        snippet_order INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_chat_memory_snippets_session '
+      'ON chat_memory_snippets(session_id, layer, snippet_order)',
+    );
   }
 
   Future<void> _createVariableSchema(DatabaseExecutor db) async {
@@ -257,6 +283,7 @@ class ChatDatabaseService {
 
     await _createMemoriesSchema(db);
     await _createVariableSchema(db);
+    await _createSummarySchema(db);
   }
 
   Future<ChatSession> createSession({
@@ -495,6 +522,11 @@ class ChatDatabaseService {
       );
       await tx.delete(
         'chat_memories',
+        where: 'session_id = ?',
+        whereArgs: [sessionId],
+      );
+      await tx.delete(
+        'chat_memory_snippets',
         where: 'session_id = ?',
         whereArgs: [sessionId],
       );
@@ -800,6 +832,31 @@ class ChatDatabaseService {
 
       // 分批删除：长分支的子树 id 可能上千，避免撑爆 SQLite 变量上限；
       // 仍在同一事务内分批，整体保持原子性。
+      final deletedIdSet = subtreeIds.toSet();
+      final snippetRows = await tx.query(
+        'chat_memory_snippets',
+        columns: ['id', 'source_message_ids'],
+        where: 'session_id = ?',
+        whereArgs: [sessionId],
+      );
+      final snippetIdsToDelete = <String>[];
+      for (final row in snippetRows) {
+        final sourceIds = _sourceMessageIdsFromJson(
+          row['source_message_ids'] as String? ?? '[]',
+        );
+        if (sourceIds.any(deletedIdSet.contains)) {
+          snippetIdsToDelete.add(row['id'] as String);
+        }
+      }
+      for (final chunk in _chunked(snippetIdsToDelete, _sqlInChunkSize)) {
+        final placeholders = List.filled(chunk.length, '?').join(',');
+        await tx.delete(
+          'chat_memory_snippets',
+          where: 'session_id = ? AND id IN ($placeholders)',
+          whereArgs: [sessionId, ...chunk],
+        );
+      }
+
       for (final chunk in _chunked(subtreeIds, _sqlInChunkSize)) {
         final placeholders = List.filled(chunk.length, '?').join(',');
         await tx.delete(
@@ -1064,36 +1121,88 @@ class ChatDatabaseService {
     });
   }
 
-  Future<List<MemoryNode>> loadBranchMemories(
-    String sessionId,
-    List<String> branchLeafIds,
-  ) async {
-    if (branchLeafIds.isEmpty) return const [];
-    // 分批查询：长分支的路径 id 可能上千，避免撑爆 SQLite 的变量上限。
-    final memories = <MemoryNode>[];
-    for (final chunk in _chunked(branchLeafIds, _sqlInChunkSize)) {
-      final placeholders = List.filled(chunk.length, '?').join(',');
-      final rows = await _db.query(
-        'chat_memories',
-        where: 'session_id = ? AND branch_leaf_id IN ($placeholders)',
-        whereArgs: [sessionId, ...chunk],
-        orderBy: 'created_at DESC',
-      );
-      memories.addAll(rows.map(_memoryFromMap));
-    }
-    // 分批后补一次全局排序，保持与单条 IN 查询一致的 created_at 降序语义。
-    memories.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    return memories;
-  }
-
-  Future<List<MemoryNode>> loadAllSessionMemories(String sessionId) async {
+  Future<List<MemorySnippet>> loadSessionSnippets(String sessionId) async {
     final rows = await _db.query(
-      'chat_memories',
+      'chat_memory_snippets',
       where: 'session_id = ?',
       whereArgs: [sessionId],
-      orderBy: 'created_at DESC',
+      orderBy: 'layer ASC, snippet_order ASC',
     );
-    return rows.map(_memoryFromMap).toList();
+    return rows.map(_snippetFromMap).toList(growable: false);
+  }
+
+  Future<int> nextSnippetOrder(String sessionId) async {
+    final rows = await _db.rawQuery(
+      'SELECT MAX(snippet_order) AS max_order FROM chat_memory_snippets '
+      'WHERE session_id = ?',
+      [sessionId],
+    );
+    final value = rows.isEmpty ? null : rows.first['max_order'];
+    return (value as int? ?? -1) + 1;
+  }
+
+  Future<void> insertSnippet(MemorySnippet snippet) async {
+    await _db.insert('chat_memory_snippets', _snippetToMap(snippet));
+    notifyMemoryChanged();
+  }
+
+  Future<void> insertSnippetsInTx(List<MemorySnippet> snippets) async {
+    if (snippets.isEmpty) return;
+    await _db.transaction((tx) async {
+      for (final snippet in snippets) {
+        await tx.insert('chat_memory_snippets', _snippetToMap(snippet));
+      }
+    });
+    notifyMemoryChanged();
+  }
+
+  Future<void> updateSnippetContent({
+    required String snippetId,
+    required String content,
+  }) async {
+    await _db.update(
+      'chat_memory_snippets',
+      {'content': content},
+      where: 'id = ?',
+      whereArgs: [snippetId],
+    );
+    notifyMemoryChanged();
+  }
+
+  Future<void> deleteSessionSnippets(String sessionId) async {
+    await _db.delete(
+      'chat_memory_snippets',
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+    );
+    notifyMemoryChanged();
+  }
+
+  /// 删除一个片段及其所有引用它的上层片段，避免留下指向已删除父片段的孤儿。
+  Future<void> deleteSnippetCascade({
+    required String sessionId,
+    required String snippetId,
+  }) async {
+    final all = await loadSessionSnippets(sessionId);
+    final toDelete = <String>{snippetId};
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final snippet in all) {
+        if (toDelete.contains(snippet.id)) continue;
+        if (snippet.parentSnippetIds.any(toDelete.contains)) {
+          toDelete.add(snippet.id);
+          changed = true;
+        }
+      }
+    }
+    await _db.delete(
+      'chat_memory_snippets',
+      where:
+          'session_id = ? AND id IN (${List.filled(toDelete.length, '?').join(',')})',
+      whereArgs: [sessionId, ...toDelete],
+    );
+    notifyMemoryChanged();
   }
 
   Future<List<ChatNode>> loadAllSessionNodes(String sessionId) async {
@@ -1117,38 +1226,6 @@ class ChatDatabaseService {
     );
   }
 
-  Future<void> insertMemory(MemoryNode memory) async {
-    await _db.insert('chat_memories', _memoryToMap(memory));
-    notifyMemoryChanged();
-  }
-
-  Future<void> insertMemoriesInTx(List<MemoryNode> memories) async {
-    if (memories.isEmpty) return;
-    await _db.transaction((tx) async {
-      for (final m in memories) {
-        await tx.insert('chat_memories', _memoryToMap(m));
-      }
-    });
-    notifyMemoryChanged();
-  }
-
-  Future<void> replaceBranchMemoriesInTx({
-    required String sessionId,
-    required String branchLeafId,
-    required List<MemoryNode> memories,
-  }) async {
-    await _db.transaction((tx) async {
-      await tx.delete(
-        'chat_memories',
-        where: 'session_id = ? AND branch_leaf_id = ?',
-        whereArgs: [sessionId, branchLeafId],
-      );
-      for (final m in memories) {
-        await tx.insert('chat_memories', _memoryToMap(m));
-      }
-    });
-    notifyMemoryChanged();
-  }
 
   // ==================== 状态变量（事件溯源） ====================
 
@@ -1679,31 +1756,37 @@ class ChatDatabaseService {
     );
   }
 
-  Map<String, Object?> _memoryToMap(MemoryNode memory) {
+  Map<String, Object?> _snippetToMap(MemorySnippet snippet) {
     return {
-      'id': memory.id,
-      'session_id': memory.sessionId,
-      'branch_leaf_id': memory.branchLeafId,
-      'content': memory.content,
-      'source_message_ids': _sourceMessageIdsToJson(memory.sourceMessageIds),
-      'is_user_edited': memory.isUserEdited ? 1 : 0,
-      'created_at': memory.createdAt.toIso8601String(),
-      'updated_at': memory.updatedAt.toIso8601String(),
+      'id': snippet.id,
+      'session_id': snippet.sessionId,
+      'layer': snippet.layer,
+      'content': snippet.content,
+      'source_message_ids': _sourceMessageIdsToJson(snippet.sourceMessageIds),
+      'parent_snippet_ids': _sourceMessageIdsToJson(snippet.parentSnippetIds),
+      'is_seed': snippet.isSeed ? 1 : 0,
+      'created_on_leaf_id': snippet.createdOnLeafId,
+      'snippet_order': snippet.order,
+      'created_at': snippet.createdAt.toIso8601String(),
     };
   }
 
-  MemoryNode _memoryFromMap(Map<String, Object?> map) {
-    return MemoryNode(
+  MemorySnippet _snippetFromMap(Map<String, Object?> map) {
+    return MemorySnippet(
       id: map['id'] as String,
       sessionId: map['session_id'] as String,
-      branchLeafId: map['branch_leaf_id'] as String,
-      content: map['content'] as String,
+      layer: map['layer'] as int? ?? 0,
+      content: map['content'] as String? ?? '',
       sourceMessageIds: _sourceMessageIdsFromJson(
         map['source_message_ids'] as String? ?? '[]',
       ),
-      isUserEdited: (map['is_user_edited'] as int? ?? 0) == 1,
+      parentSnippetIds: _sourceMessageIdsFromJson(
+        map['parent_snippet_ids'] as String? ?? '[]',
+      ),
+      isSeed: (map['is_seed'] as int? ?? 0) == 1,
+      createdOnLeafId: map['created_on_leaf_id'] as String? ?? '',
+      order: map['snippet_order'] as int? ?? 0,
       createdAt: DateTime.parse(map['created_at'] as String),
-      updatedAt: DateTime.parse(map['updated_at'] as String),
     );
   }
 }

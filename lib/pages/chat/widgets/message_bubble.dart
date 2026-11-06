@@ -36,6 +36,7 @@ class MessageBubble extends StatefulWidget {
     this.onSelectPreviousVariant,
     this.onSelectNextVariant,
     this.displayText,
+    this.isGhosted = false,
   });
 
   final ChatMessage message;
@@ -65,6 +66,9 @@ class MessageBubble extends StatefulWidget {
 
   /// 「显示」规则处理后的渲染文本；为空时使用 [message.text] 原始文本。
   final String? displayText;
+
+  /// 该消息已被分层摘要覆盖：仍展示原文，但不再进入后续 Prompt。
+  final bool isGhosted;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -307,16 +311,51 @@ class _MessageBubbleState extends State<MessageBubble> {
         final showAvatar = settings.showAvatar;
 
         if (isMe) {
-          return _buildUserBubble(context, colorScheme, settings, showAvatar);
-        } else {
-          return _buildCharacterBubble(
+          final bubble = _buildUserBubble(
             context,
             colorScheme,
             settings,
             showAvatar,
           );
+          return widget.isGhosted
+              ? Opacity(opacity: 0.62, child: bubble)
+              : bubble;
+        } else {
+          final bubble = _buildCharacterBubble(
+            context,
+            colorScheme,
+            settings,
+            showAvatar,
+          );
+          return widget.isGhosted
+              ? Opacity(opacity: 0.62, child: bubble)
+              : bubble;
         }
       },
+    );
+  }
+
+  Widget _buildGhostedBadge(ColorScheme colorScheme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.auto_awesome_outlined,
+            size: 13,
+            color: colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            '已摘要 · 不再进入上下文',
+            style: TextStyle(
+              fontSize: 11,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -347,6 +386,7 @@ class _MessageBubbleState extends State<MessageBubble> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
+              if (widget.isGhosted) _buildGhostedBadge(colorScheme),
               OverlayPortal.overlayChildLayoutBuilder(
                 controller: _overlayPortalController,
                 overlayChildBuilder: _buildPopupOverlay,
@@ -444,6 +484,7 @@ class _MessageBubbleState extends State<MessageBubble> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (widget.isGhosted) _buildGhostedBadge(colorScheme),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

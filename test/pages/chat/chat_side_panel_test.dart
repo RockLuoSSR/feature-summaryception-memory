@@ -67,7 +67,7 @@ void main() {
   ListTile memoryTile(WidgetTester tester) {
     return tester.widget<ListTile>(
       find.ancestor(
-        of: find.text('长期记忆'),
+        of: find.text('分层记忆'),
         matching: find.byType(ListTile),
       ),
     );
@@ -106,7 +106,7 @@ void main() {
 
     expect(find.text('记忆与状态'), findsOneWidget);
     expect(find.text('测试聊天'), findsOneWidget);
-    expect(find.text('3 条记忆'), findsOneWidget);
+    expect(find.text('3 条摘要'), findsOneWidget);
     // 数值变量默认生成进度条：标题 + 当前值。
     expect(find.text('好感度'), findsOneWidget);
     expect(find.text('12'), findsOneWidget);
@@ -252,7 +252,7 @@ void main() {
     expect(find.text('好感度'), findsOneWidget);
     expect(memoryTile(tester).onTap, isNull, reason: '草稿会话不要跳到空记忆树');
     // 禁用态点击不得触发回调。
-    await tester.tap(find.text('长期记忆'));
+    await tester.tap(find.text('分层记忆'));
     expect(openedMemory, isFalse);
     expect(find.text('正式开始聊天后可用'), findsOneWidget);
     expect(
@@ -269,7 +269,7 @@ void main() {
   testWidgets('无会话时提示并禁用入口', (tester) async {
     await pumpContent(tester, buildContent(hasSession: false));
 
-    expect(find.text('暂无会话'), findsOneWidget, reason: '长期记忆副标题');
+    expect(find.text('暂无会话'), findsOneWidget, reason: '分层记忆副标题');
     expect(find.textContaining('暂无会话：选择或新建一个聊天后显示状态变量'), findsOneWidget);
     expect(memoryTile(tester).onTap, isNull);
     expect(buttonWithTooltip(tester, '刷新').onPressed, isNull);
@@ -292,7 +292,7 @@ void main() {
     expect(refreshed, 1);
   });
 
-  testWidgets('点击长期记忆 / 完整页 / 刷新触发对应回调', (tester) async {
+  testWidgets('点击分层记忆 / 完整页 / 刷新触发对应回调', (tester) async {
     var openedMemory = 0;
     var openedVariable = 0;
     var refreshed = 0;
@@ -305,7 +305,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('长期记忆'));
+    await tester.tap(find.text('分层记忆'));
     await tester.tap(find.byTooltip('完整页 / 提取配置'));
     await tester.tap(find.byTooltip('刷新'));
 

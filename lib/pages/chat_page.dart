@@ -917,6 +917,8 @@ class _ChatPageState extends State<ChatPage> {
                                     sessionId: session.id,
                                     selectedRegexRuleGroupIds:
                                         _viewModel.selectedRegexRuleGroupIds,
+                                    ghostedMessageIds:
+                                        _viewModel.ghostedMessageIds,
                                     onCopyMessage: _onCopyMessage,
                                     onEditMessage: _onEditMessage,
                                     onEditDraftOpeningMessage:

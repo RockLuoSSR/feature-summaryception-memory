@@ -35,6 +35,7 @@ class MessageViewParams {
     required this.onContinueMessage,
     required this.onImpersonate,
     required this.onSwitchMessageVariant,
+    this.ghostedMessageIds = const {},
   });
 
   final List<ChatMessage> visibleMessages;
@@ -65,6 +66,9 @@ class MessageViewParams {
 
   final String? sessionId;
   final Set<String> selectedRegexRuleGroupIds;
+
+  /// 已被分层摘要覆盖的消息 ID；这些消息仍显示，但会弱化并标注。
+  final Set<String> ghostedMessageIds;
 
   final void Function(ChatMessage msg) onCopyMessage;
   final void Function(int index) onEditMessage;
@@ -102,6 +106,7 @@ class MessageViewParams {
       onContinueMessage: onContinueMessage,
       onImpersonate: onImpersonate,
       onSwitchMessageVariant: onSwitchMessageVariant,
+      ghostedMessageIds: ghostedMessageIds,
     );
   }
 
@@ -133,6 +138,7 @@ class MessageViewParams {
       onContinueMessage: onContinueMessage,
       onImpersonate: onImpersonate,
       onSwitchMessageVariant: onSwitchMessageVariant,
+      ghostedMessageIds: ghostedMessageIds,
     );
   }
 }

@@ -9,7 +9,7 @@ import '../../../services/variable_state_service.dart';
 import '../../../widgets/variable_panel_detail_sheet.dart';
 import '../../../widgets/variable_panel_grid.dart';
 
-/// 聊天页侧边栏：长期记忆入口 + 状态变量实时显示。
+/// 聊天页侧边栏：分层记忆入口 + 状态变量实时显示。
 ///
 /// 由 [ChatPage] 挂在 `Scaffold.endDrawer` 上，只负责取数与刷新；
 /// 具体呈现交给 [ChatSidePanelContent]，便于单独做 widget 测试。
@@ -47,7 +47,7 @@ class ChatSidePanel extends StatefulWidget {
   /// 草稿会话下角色卡声明的初始变量（正式开始时才会写入会话）。
   final VariableState draftState;
 
-  /// 打开长期记忆整页。
+  /// 打开分层记忆整页。
   final VoidCallback onOpenMemoryManager;
 
   /// 打开状态变量整页（初始变量声明说明、提取配置、宏用法）。
@@ -175,15 +175,16 @@ class _ChatSidePanelState extends State<ChatSidePanel> {
         sessionId: sessionId,
         messageId: widget.leafMessageId,
       );
-      final memories = await ChatDatabaseService.instance
-          .loadAllSessionMemories(sessionId);
+      final snippets = await ChatDatabaseService.instance.loadSessionSnippets(
+        sessionId,
+      );
       if (!mounted || generation != _loadGeneration) {
         return;
       }
       setState(() {
         _initState = init;
         _leafState = leaf;
-        _memoryCount = memories.length;
+        _memoryCount = snippets.length;
         _loadedSessionId = sessionId;
         _loadedLeafMessageId = widget.leafMessageId;
         _isLoading = false;
@@ -275,7 +276,7 @@ class ChatSidePanelContent extends StatelessWidget {
     if (isDraftSession) {
       return '正式开始聊天后可用';
     }
-    return memoryCount > 0 ? '$memoryCount 条记忆' : '暂无记忆';
+    return memoryCount > 0 ? '$memoryCount 条摘要' : '暂无摘要';
   }
 
   @override
@@ -324,15 +325,14 @@ class ChatSidePanelContent extends StatelessWidget {
         const SizedBox(height: 4),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Container(
-            decoration: BoxDecoration(
-              color: colorScheme.primaryContainer.withValues(alpha: 0.3),
-              borderRadius: BorderRadius.circular(12),
-            ),
+          child: Material(
+            color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
             child: ListTile(
               contentPadding: const EdgeInsets.symmetric(horizontal: 12),
               leading: Icon(Icons.auto_awesome, color: colorScheme.primary),
-              title: const Text('长期记忆'),
+              title: const Text('分层记忆'),
               subtitle: Text(_memorySubtitle),
               trailing: Icon(
                 Icons.chevron_right,
