@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "adoretes" "\0"
-            VALUE "FileDescription", "PocketInn" "\0"
+            VALUE "FileDescription", "M-pocketinn" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "pocket_inn" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 adoretes. All rights reserved." "\0"
             VALUE "OriginalFilename", "pocket_inn.exe" "\0"
-            VALUE "ProductName", "PocketInn" "\0"
+            VALUE "ProductName", "M-pocketinn" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

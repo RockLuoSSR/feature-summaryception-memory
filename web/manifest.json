@@ -1,6 +1,6 @@
 {
-    "name": "PocketInn",
-    "short_name": "PocketInn",
+    "name": "M-pocketinn",
+    "short_name": "M-pocketinn",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

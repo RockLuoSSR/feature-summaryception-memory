@@ -28,7 +28,7 @@ class MyApp extends StatelessWidget {
       valueListenable: appSettingsNotifier,
       builder: (context, settings, _) {
         return MaterialApp(
-          title: 'PocketInn',
+          title: 'M-pocketinn',
           themeMode: settings.colorMode.themeMode,
           theme: buildAppTheme(settings, Brightness.light),
           darkTheme: buildAppTheme(settings, Brightness.dark),
